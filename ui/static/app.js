@@ -92,17 +92,27 @@ function bindRunPage() {
     }
   }
 
+  function selectedProvider() {
+    return form.querySelector('input[name="broll_provider"]:checked')?.value || "pixabay";
+  }
+
+  function refreshProviderPill(provider) {
+    const pill = document.getElementById("broll-pill");
+    if (pill && provider) pill.textContent = provider;
+  }
+
   async function saveFirst(btn) {
     toast("Files save ho rahi hain...");
     const data = await postForm(`/api/runs/${runId}/save`, form, btn);
     await refreshStatus(data.status);
+    refreshProviderPill(data.broll_provider || selectedProvider());
     return data;
   }
 
   document.getElementById("btn-save")?.addEventListener("click", async (e) => {
     try {
       await saveFirst(e.currentTarget);
-      toast("Saved", "ok");
+      toast(`Saved · B-roll: ${selectedProvider()}`, "ok");
     } catch (err) {
       toast(String(err.message || err), "bad");
     }
@@ -112,11 +122,13 @@ function bindRunPage() {
     const btn = e.currentTarget;
     try {
       await saveFirst(btn);
-      toast("Render chal raha hai (30–90 sec)... audio + video banega");
+      const provider = selectedProvider();
+      toast(`Render (${provider}) chal raha hai (30–90 sec)...`);
       btn.disabled = true;
-      const data = await postForm(`/api/runs/${runId}/render`, null, btn);
+      // Send form so broll_provider is included
+      const data = await postForm(`/api/runs/${runId}/render`, form, btn);
       await refreshStatus(data.status);
-      toast(`Render done — ${data.status}`, "ok");
+      toast(`Render done — ${data.status} · ${data.broll_provider || provider}`, "ok");
       window.location.reload();
     } catch (err) {
       toast(String(err.message || err), "bad");

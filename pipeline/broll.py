@@ -1,4 +1,4 @@
-"""Fetch B-roll photos from Unsplash (with visible text-slide fallback)."""
+"""Fetch B-roll from Pixabay (default) or Unsplash, with text-slide fallback."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pathlib import Path
 import requests
 from PIL import Image, ImageDraw
 
-from pipeline.config import Config
+from pipeline.config import Config, normalize_broll_provider
 from pipeline.fonts import load_font
+from pipeline.jsonutil import load_json_file
 
-# Distinct fallback palettes so beats are obviously different without Unsplash
 _FALLBACK_PALETTES = [
     ((20, 40, 90), (245, 197, 66), (245, 247, 250)),
     ((90, 24, 40), (90, 220, 200), (255, 255, 255)),
@@ -53,7 +53,6 @@ def _text_slide(
     label: str,
     beat_index: int,
 ) -> Path:
-    """Bright slide with on-screen label — never a blank black frame."""
     path.parent.mkdir(parents=True, exist_ok=True)
     bg, accent, fg = _FALLBACK_PALETTES[beat_index % len(_FALLBACK_PALETTES)]
     img = Image.new("RGB", (width, height), bg)
@@ -118,12 +117,111 @@ def _download(url: str, dest: Path) -> Path:
     return dest
 
 
+def search_pixabay(query: str, cfg: Config) -> Path | None:
+    """Prefer Pixabay video clips; fall back to photos."""
+    if not cfg.pixabay_api_key:
+        return None
+    cache_dir = cfg.cache_dir / "pixabay"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    key = _cache_key(f"pixabay|{query}|{cfg.video_format}")
+    meta_path = cache_dir / f"{key}.json"
+    if meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        local = Path(meta["path"])
+        if local.exists():
+            return local
+
+    q = " ".join(query.split())[:100]
+    # 1) Videos
+    try:
+        resp = requests.get(
+            "https://pixabay.com/api/videos/",
+            params={
+                "key": cfg.pixabay_api_key,
+                "q": q,
+                "per_page": 5,
+                "safesearch": "true",
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        hits = resp.json().get("hits") or []
+    except requests.RequestException:
+        hits = []
+
+    if hits:
+        videos = hits[0].get("videos") or {}
+        # Prefer medium HD for Shorts/long
+        for quality in ("medium", "large", "small", "tiny"):
+            entry = videos.get(quality) or {}
+            url = entry.get("url")
+            if url:
+                dest = cache_dir / f"{key}.mp4"
+                _download(url, dest)
+                meta_path.write_text(
+                    json.dumps(
+                        {
+                            "query": query,
+                            "path": str(dest),
+                            "type": "video",
+                            "provider": "pixabay",
+                            "pixabay_id": hits[0].get("id"),
+                        },
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                return dest
+
+    # 2) Photos
+    orientation = "vertical" if cfg.video_format == "shorts" else "horizontal"
+    try:
+        resp = requests.get(
+            "https://pixabay.com/api/",
+            params={
+                "key": cfg.pixabay_api_key,
+                "q": q,
+                "image_type": "photo",
+                "orientation": orientation,
+                "safesearch": "true",
+                "per_page": 5,
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        photos = resp.json().get("hits") or []
+    except requests.RequestException:
+        return None
+
+    if not photos:
+        return None
+    url = photos[0].get("largeImageURL") or photos[0].get("webformatURL")
+    if not url:
+        return None
+    dest = cache_dir / f"{key}.jpg"
+    _download(url, dest)
+    meta_path.write_text(
+        json.dumps(
+            {
+                "query": query,
+                "path": str(dest),
+                "type": "image",
+                "provider": "pixabay",
+                "pixabay_id": photos[0].get("id"),
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return dest
+
+
 def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     if not cfg.unsplash_access_key:
         return None
     cache_dir = cfg.cache_dir / "unsplash"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(query + "|" + cfg.video_format)
+    key = _cache_key(f"unsplash|{query}|{cfg.video_format}")
     meta_path = cache_dir / f"{key}.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -160,7 +258,6 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     dest = cache_dir / f"{key}.jpg"
     _download(url, dest)
 
-    # Unsplash guidelines: trigger download endpoint when using a photo
     download_loc = (results[0].get("links") or {}).get("download_location")
     if download_loc:
         try:
@@ -178,6 +275,7 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
                 "query": query,
                 "path": str(dest),
                 "type": "image",
+                "provider": "unsplash",
                 "unsplash_id": results[0].get("id"),
                 "photographer": (results[0].get("user") or {}).get("name"),
             },
@@ -188,19 +286,33 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     return dest
 
 
+def provider_for_run(run_dir: Path, cfg: Config) -> str:
+    idea = load_json_file(run_dir / "idea.json", {})
+    if isinstance(idea, dict) and idea.get("broll_provider"):
+        return normalize_broll_provider(str(idea["broll_provider"]), cfg.default_broll_provider)
+    return cfg.default_broll_provider
+
+
 def resolve_broll(
     queries: list[str],
     cfg: Config,
     run_dir: Path,
     beat_durations: list[float],
+    provider: str | None = None,
 ) -> list[Path]:
-    """Return one media path per beat."""
+    """Return one media path per beat from the selected provider."""
+    chosen = normalize_broll_provider(provider, cfg.default_broll_provider)
     out_dir = run_dir / "broll"
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
+    print(f"B-roll provider: {chosen}")
     for i, query in enumerate(queries):
         dur = beat_durations[i] if i < len(beat_durations) else 3.0
-        found = search_unsplash_photo(query, cfg)
+        found = None
+        if chosen == "pixabay":
+            found = search_pixabay(query, cfg)
+        else:
+            found = search_unsplash_photo(query, cfg)
         if found is None:
             found = _text_slide(
                 out_dir / f"beat_{i:02d}.mp4",
@@ -211,6 +323,12 @@ def resolve_broll(
                 i,
             )
         paths.append(found)
-    manifest = [{"query": q, "path": str(p)} for q, p in zip(queries, paths)]
-    (run_dir / "broll.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest = [
+        {"query": q, "path": str(p), "provider": chosen}
+        for q, p in zip(queries, paths)
+    ]
+    (run_dir / "broll.json").write_text(
+        json.dumps({"provider": chosen, "items": manifest}, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
     return paths

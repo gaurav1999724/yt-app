@@ -15,6 +15,8 @@ PIPELINE_DIR = Path(__file__).resolve().parent
 load_dotenv(ROOT / ".env")
 load_dotenv(PIPELINE_DIR / ".env")
 
+BROLL_PROVIDERS = ("pixabay", "unsplash")
+
 
 def _path(value: str | None, default: Path) -> Path:
     if not value:
@@ -23,9 +25,16 @@ def _path(value: str | None, default: Path) -> Path:
     return p if p.is_absolute() else ROOT / p
 
 
+def normalize_broll_provider(value: str | None, default: str = "pixabay") -> str:
+    v = (value or default or "pixabay").strip().lower()
+    return v if v in BROLL_PROVIDERS else "pixabay"
+
+
 @dataclass(frozen=True)
 class Config:
+    pixabay_api_key: str
     unsplash_access_key: str
+    default_broll_provider: str
     youtube_client_secrets: Path
     youtube_token_path: Path
     tts_voice: str
@@ -59,7 +68,11 @@ def load_config() -> Config:
         "hi-IN-MadhurNeural" if language.startswith("hi") else "en-US-GuyNeural"
     )
     return Config(
+        pixabay_api_key=os.getenv("PIXABAY_API_KEY", "").strip(),
         unsplash_access_key=os.getenv("UNSPLASH_ACCESS_KEY", "").strip(),
+        default_broll_provider=normalize_broll_provider(
+            os.getenv("BROLL_PROVIDER", "pixabay")
+        ),
         youtube_client_secrets=_path(
             os.getenv("YOUTUBE_CLIENT_SECRETS"),
             PIPELINE_DIR / "client_secrets.json",

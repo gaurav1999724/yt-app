@@ -10,6 +10,10 @@
     <span class="pill">Lang <strong>{{ config.language }}</strong></span>
     <span class="pill">Voice <strong>{{ config.tts_voice }}</strong></span>
     <span class="pill">Format <strong>{{ config.video_format }}</strong></span>
+    <span class="pill">B-roll default <strong>{{ config.default_broll_provider }}</strong></span>
+    <span class="pill {% if config.pixabay_configured %}on{% else %}off{% endif %}">
+      Pixabay {% if config.pixabay_configured %}OK{% else %}missing{% endif %}
+    </span>
     <span class="pill {% if config.unsplash_configured %}on{% else %}off{% endif %}">
       Unsplash {% if config.unsplash_configured %}OK{% else %}missing{% endif %}
     </span>
@@ -25,6 +29,18 @@
     <form id="create-form">
       <label for="idea">Idea / working title (Hindi)</label>
       <input id="idea" name="idea" type="text" required placeholder="पहले 15 सेकंड रिटेंशन खत्म कर रहे हैं" />
+
+      <label>B-roll source (video generate ke liye)</label>
+      <div class="toggle" role="group" aria-label="B-roll provider">
+        <label class="toggle-opt">
+          <input type="radio" name="broll_provider" value="pixabay" {% if config.default_broll_provider != 'unsplash' %}checked{% endif %} />
+          <span>Pixabay <small>default · video + photos</small></span>
+        </label>
+        <label class="toggle-opt">
+          <input type="radio" name="broll_provider" value="unsplash" {% if config.default_broll_provider == 'unsplash' %}checked{% endif %} />
+          <span>Unsplash <small>photos</small></span>
+        </label>
+      </div>
 
       <label for="script">Script (optional — baad mein bhi edit kar sakte ho)</label>
       <textarea id="script" name="script" placeholder="# स्क्रिप्ट

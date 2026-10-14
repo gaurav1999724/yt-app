@@ -6,7 +6,7 @@ import argparse
 import json
 from pathlib import Path
 
-from pipeline.config import Config, load_config
+from pipeline.config import Config, load_config, normalize_broll_provider
 from pipeline.jsonutil import load_json_file, parse_json_text
 from pipeline.run import cmd_approve, cmd_init, cmd_render, cmd_upload
 from pipeline.status import read_status
@@ -33,6 +33,9 @@ def list_runs() -> list[dict]:
                 "path": str(path),
                 "status": read_status(path) or "DRAFT",
                 "idea": idea.get("idea") or path.name,
+                "broll_provider": normalize_broll_provider(
+                    idea.get("broll_provider"), cfg().default_broll_provider
+                ),
                 "has_video": (path / "video.mp4").exists(),
                 "has_thumb": (path / "thumb.png").exists(),
             }
@@ -76,6 +79,19 @@ def _default_seo(idea: str) -> dict:
     }
 
 
+def _set_broll_provider(path: Path, provider: str) -> str:
+    chosen = normalize_broll_provider(provider, cfg().default_broll_provider)
+    idea = load_json_file(path / "idea.json", {})
+    if not isinstance(idea, dict):
+        idea = {}
+    idea["broll_provider"] = chosen
+    write_text_file(
+        path / "idea.json",
+        json.dumps(idea, indent=2, ensure_ascii=False),
+    )
+    return chosen
+
+
 def load_run(run_id: str) -> dict:
     path = run_dir(run_id)
     package_raw = read_text_file(path / "package.json")
@@ -91,7 +107,6 @@ def load_run(run_id: str) -> dict:
     if not isinstance(seo, dict):
         seo = {}
 
-    # If files were wiped empty, show usable defaults in the editor
     idea_text = idea.get("idea") or run_id
     if not package_raw.strip():
         package = _default_package(idea_text)
@@ -100,11 +115,16 @@ def load_run(run_id: str) -> dict:
         seo = _default_seo(idea_text)
         seo_raw = json.dumps(seo, indent=2, ensure_ascii=False)
 
+    provider = normalize_broll_provider(
+        idea.get("broll_provider"), cfg().default_broll_provider
+    )
+
     return {
         "id": run_id,
         "path": str(path),
         "status": read_status(path) or "DRAFT",
         "idea": idea,
+        "broll_provider": provider,
         "script": read_text_file(path / "script.md"),
         "package_raw": package_raw,
         "seo_raw": seo_raw,
@@ -123,6 +143,7 @@ def create_run(
     script: str = "",
     package_json: str = "",
     seo_json: str = "",
+    broll_provider: str = "",
 ) -> str:
     config = cfg()
     config.output_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +166,6 @@ def create_run(
     if script.strip():
         write_text_file(path / "script.md", script)
 
-    # Invalid / empty optional JSON → defaults (UI should never hard-fail here)
     pkg = parse_json_text(package_json, field="package.json", strict=False)
     if not pkg:
         pkg = _default_package(idea_text)
@@ -161,10 +181,17 @@ def create_run(
         path / "seo.json",
         json.dumps(seo, indent=2, ensure_ascii=False),
     )
+    _set_broll_provider(path, broll_provider or config.default_broll_provider)
     return path.name
 
 
-def save_run_files(run_id: str, script: str, package_json: str, seo_json: str) -> None:
+def save_run_files(
+    run_id: str,
+    script: str,
+    package_json: str,
+    seo_json: str,
+    broll_provider: str = "",
+) -> None:
     path = run_dir(run_id)
     idea = load_json_file(path / "idea.json", {})
     idea_text = idea.get("idea") if isinstance(idea, dict) else run_id
@@ -187,11 +214,14 @@ def save_run_files(run_id: str, script: str, package_json: str, seo_json: str) -
         path / "seo.json",
         json.dumps(seo, indent=2, ensure_ascii=False),
     )
+    if broll_provider:
+        _set_broll_provider(path, broll_provider)
 
 
-def action_render(run_id: str) -> dict:
+def action_render(run_id: str, broll_provider: str = "") -> dict:
     path = run_dir(run_id)
-    # Ensure JSON files are never empty before render
+    if broll_provider:
+        _set_broll_provider(path, broll_provider)
     save_run_files(
         run_id,
         read_text_file(path / "script.md"),
@@ -207,7 +237,18 @@ def action_render(run_id: str) -> dict:
         lines = status_path.read_text(encoding="utf-8").splitlines()
         if len(lines) >= 3:
             note = lines[2]
-    result = {"ok": rc == 0, "status": status, "run_id": run_id}
+    idea = load_json_file(path / "idea.json", {})
+    provider = None
+    if isinstance(idea, dict):
+        provider = idea.get("broll_provider")
+    result = {
+        "ok": rc == 0,
+        "status": status,
+        "run_id": run_id,
+        "broll_provider": normalize_broll_provider(
+            provider, cfg().default_broll_provider
+        ),
+    }
     if rc != 0:
         result["error"] = note or "Render failed"
     return result
@@ -243,6 +284,8 @@ def config_summary() -> dict:
         "video_format": c.video_format,
         "upload_privacy": c.upload_privacy,
         "output_dir": str(c.output_dir),
+        "default_broll_provider": c.default_broll_provider,
+        "pixabay_configured": bool(c.pixabay_api_key),
         "unsplash_configured": bool(c.unsplash_access_key),
         "youtube_secrets_present": c.youtube_client_secrets.exists(),
         "youtube_token_present": c.youtube_token_path.exists(),

@@ -19,7 +19,7 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from pipeline.broll import resolve_broll
+from pipeline.broll import provider_for_run, resolve_broll
 from pipeline.compose import compose_video
 from pipeline.config import Config, load_config
 from pipeline.script_parse import parse_script_file
@@ -64,6 +64,7 @@ def cmd_init(args: argparse.Namespace, cfg: Config) -> int:
                     "created_at": datetime.now(timezone.utc).isoformat(),
                     "format": cfg.video_format,
                     "language": cfg.language,
+                    "broll_provider": cfg.default_broll_provider,
                 },
                 indent=2,
                 ensure_ascii=False,
@@ -163,8 +164,11 @@ def cmd_render(args: argparse.Namespace, cfg: Config) -> int:
         wsum = sum(weights) or 1
         beat_durs = [tts.duration * (w / wsum) for w in weights]
 
-        print("Fetching B-roll...")
-        broll_paths = resolve_broll(queries, cfg, run_dir, beat_durs)
+        provider = provider_for_run(run_dir, cfg)
+        print(f"Fetching B-roll ({provider})...")
+        broll_paths = resolve_broll(
+            queries, cfg, run_dir, beat_durs, provider=provider
+        )
 
         print("Composing video...")
         video_path = compose_video(run_dir, cfg, tts, broll_paths, spoken_parts)

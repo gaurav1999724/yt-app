@@ -113,7 +113,10 @@ Set at least:
 - `TTS_VOICE` — Hindi: `hi-IN-MadhurNeural` / `hi-IN-SwaraNeural` (`edge-tts --list-voices`)
 - `VIDEO_FORMAT` — `shorts` (1080x1920) or `long` (1920x1080)
 - `UPLOAD_PRIVACY` — keep `private` until you trust the pipeline
-- `UNSPLASH_ACCESS_KEY` — optional; without it, Hindi text-slide placeholders are used ([unsplash.com/developers](https://unsplash.com/developers))
+- `BROLL_PROVIDER` — default `pixabay` (UI can override per video to `unsplash`)
+- `PIXABAY_API_KEY` — default B-roll source ([pixabay.com/api/docs](https://pixabay.com/api/docs/))
+- `UNSPLASH_ACCESS_KEY` — optional alternate B-roll ([unsplash.com/developers](https://unsplash.com/developers))
+- Without the chosen provider’s key, Hindi text-slide placeholders are used
 - `YOUTUBE_CLIENT_SECRETS` — path to Google OAuth Desktop client JSON
 
 4. Google Cloud: enable **YouTube Data API v3**, create an OAuth **Desktop** client, download JSON to

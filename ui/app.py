@@ -59,10 +59,13 @@ def api_create_run(
     script: str = Form(""),
     package_json: str = Form(""),
     seo_json: str = Form(""),
+    broll_provider: str = Form("pixabay"),
 ):
     # Sync handlers run in a threadpool — safe for asyncio.run() inside TTS.
     try:
-        run_id = services.create_run(idea, script, package_json, seo_json)
+        run_id = services.create_run(
+            idea, script, package_json, seo_json, broll_provider=broll_provider
+        )
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
     return {"ok": True, "run_id": run_id, "redirect": f"/runs/{run_id}"}
@@ -74,18 +77,26 @@ def api_save(
     script: str = Form(""),
     package_json: str = Form(""),
     seo_json: str = Form(""),
+    broll_provider: str = Form(""),
 ):
     try:
-        services.save_run_files(run_id, script, package_json, seo_json)
+        services.save_run_files(
+            run_id, script, package_json, seo_json, broll_provider=broll_provider
+        )
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return {"ok": True, "status": services.load_run(run_id)["status"]}
+    run = services.load_run(run_id)
+    return {
+        "ok": True,
+        "status": run["status"],
+        "broll_provider": run["broll_provider"],
+    }
 
 
 @app.post("/api/runs/{run_id}/render")
-def api_render(run_id: str):
+def api_render(run_id: str, broll_provider: str = Form("")):
     try:
-        result = services.action_render(run_id)
+        result = services.action_render(run_id, broll_provider=broll_provider)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"ok": False, "error": str(exc), "trace": traceback.format_exc()},

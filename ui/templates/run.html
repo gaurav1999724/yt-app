@@ -11,6 +11,7 @@
   <div class="pill-row">
     <span id="status-badge" class="status {{ run.status }}">{{ run.status }}</span>
     <span class="pill">Privacy default <strong>{{ config.upload_privacy }}</strong></span>
+    <span class="pill">B-roll <strong id="broll-pill">{{ run.broll_provider }}</strong></span>
   </div>
 </header>
 
@@ -25,6 +26,19 @@
   <section class="panel">
     <h2>Content</h2>
     <form id="run-form">
+      <label>B-roll source</label>
+      <div class="toggle" role="group" aria-label="B-roll provider">
+        <label class="toggle-opt">
+          <input type="radio" name="broll_provider" value="pixabay" {% if run.broll_provider != 'unsplash' %}checked{% endif %} />
+          <span>Pixabay <small>default</small></span>
+        </label>
+        <label class="toggle-opt">
+          <input type="radio" name="broll_provider" value="unsplash" {% if run.broll_provider == 'unsplash' %}checked{% endif %} />
+          <span>Unsplash</span>
+        </label>
+      </div>
+      <p class="note" style="margin-top:0.4rem">Render se pehle choose karo — isi source se B-roll aayega.</p>
+
       <label for="script">script.md</label>
       <textarea id="script" name="script">{{ run.script }}</textarea>
 
