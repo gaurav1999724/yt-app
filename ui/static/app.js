@@ -118,18 +118,46 @@ function bindRunPage() {
     }
   });
 
+  async function pollUntilDone(btn) {
+    const terminal = new Set(["READY_FOR_REVIEW", "FAILED", "APPROVED", "UPLOADED"]);
+    const started = Date.now();
+    const maxMs = 8 * 60 * 1000; // 8 min
+    while (Date.now() - started < maxMs) {
+      await new Promise((r) => setTimeout(r, 3000));
+      const res = await fetch(`/api/runs/${runId}`);
+      const data = await res.json().catch(() => ({}));
+      const status = data.status || "";
+      await refreshStatus(status);
+      refreshProviderPill(data.broll_provider);
+      toast(`Render status: ${status || "..."}`, status === "FAILED" ? "bad" : "ok");
+      if (terminal.has(status) && status !== "RENDERING") {
+        if (status === "FAILED") {
+          throw new Error(data.error || "Render failed — Render logs check karo (ffmpeg/memory).");
+        }
+        toast(`Render done — ${status}`, "ok");
+        window.location.reload();
+        return;
+      }
+    }
+    throw new Error("Render timeout — page refresh karke STATUS dekho.");
+  }
+
   document.getElementById("btn-render")?.addEventListener("click", async (e) => {
     const btn = e.currentTarget;
     try {
       await saveFirst(btn);
       const provider = selectedProvider();
-      toast(`Render (${provider}) chal raha hai (30–90 sec)...`);
+      toast(`Render (${provider}) background mein start...`);
+      // Don't pass btn — postForm would re-enable it; keep disabled while polling
       btn.disabled = true;
-      // Send form so broll_provider is included
-      const data = await postForm(`/api/runs/${runId}/render`, form, btn);
-      await refreshStatus(data.status);
-      toast(`Render done — ${data.status} · ${data.broll_provider || provider}`, "ok");
-      window.location.reload();
+      const data = await postForm(`/api/runs/${runId}/render`, form, null);
+      await refreshStatus(data.status || "RENDERING");
+      if (data.status === "READY_FOR_REVIEW") {
+        toast(`Render done — ${data.status}`, "ok");
+        window.location.reload();
+        return;
+      }
+      await pollUntilDone(btn);
     } catch (err) {
       toast(String(err.message || err), "bad");
       btn.disabled = false;

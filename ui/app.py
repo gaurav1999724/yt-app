@@ -95,15 +95,14 @@ def api_save(
 
 @app.post("/api/runs/{run_id}/render")
 def api_render(run_id: str, broll_provider: str = Form("")):
+    """Start render in background — returns immediately (Render proxy times out ~30–100s)."""
     try:
-        result = services.action_render(run_id, broll_provider=broll_provider)
+        result = services.start_render_async(run_id, broll_provider=broll_provider)
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"ok": False, "error": str(exc), "trace": traceback.format_exc()},
             status_code=500,
         )
-    if not result.get("ok"):
-        return JSONResponse(result, status_code=500)
     return result
 
 

@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import threading
+import traceback
 from pathlib import Path
 
 from pipeline.config import Config, load_config, normalize_broll_provider
 from pipeline.jsonutil import load_json_file, parse_json_text
 from pipeline.run import cmd_approve, cmd_init, cmd_render, cmd_upload
-from pipeline.status import read_status
+from pipeline.status import FAILED, RENDERING, read_status, write_status
+
+# In-process render jobs (needed on Render — HTTP can't wait 1–3 min)
+_render_lock = threading.Lock()
+_render_threads: dict[str, threading.Thread] = {}
 
 
 def cfg() -> Config:
@@ -119,10 +125,19 @@ def load_run(run_id: str) -> dict:
         idea.get("broll_provider"), cfg().default_broll_provider
     )
 
+    status = read_status(path) or "DRAFT"
+    status_note = ""
+    status_file = path / "STATUS"
+    if status_file.exists():
+        lines = status_file.read_text(encoding="utf-8").splitlines()
+        if len(lines) >= 3:
+            status_note = "\n".join(lines[2:]).strip()
+
     return {
         "id": run_id,
         "path": str(path),
-        "status": read_status(path) or "DRAFT",
+        "status": status,
+        "error": status_note if status == FAILED else "",
         "idea": idea,
         "broll_provider": provider,
         "script": read_text_file(path / "script.md"),
@@ -218,18 +233,8 @@ def save_run_files(
         _set_broll_provider(path, broll_provider)
 
 
-def action_render(run_id: str, broll_provider: str = "") -> dict:
+def _render_result(run_id: str, rc: int) -> dict:
     path = run_dir(run_id)
-    if broll_provider:
-        _set_broll_provider(path, broll_provider)
-    save_run_files(
-        run_id,
-        read_text_file(path / "script.md"),
-        read_text_file(path / "package.json"),
-        read_text_file(path / "seo.json"),
-    )
-    ns = argparse.Namespace(from_dir=str(path), idea=None)
-    rc = cmd_render(ns, cfg())
     status = read_status(path)
     note = ""
     status_path = path / "STATUS"
@@ -238,9 +243,7 @@ def action_render(run_id: str, broll_provider: str = "") -> dict:
         if len(lines) >= 3:
             note = lines[2]
     idea = load_json_file(path / "idea.json", {})
-    provider = None
-    if isinstance(idea, dict):
-        provider = idea.get("broll_provider")
+    provider = idea.get("broll_provider") if isinstance(idea, dict) else None
     result = {
         "ok": rc == 0,
         "status": status,
@@ -252,6 +255,82 @@ def action_render(run_id: str, broll_provider: str = "") -> dict:
     if rc != 0:
         result["error"] = note or "Render failed"
     return result
+
+
+def action_render(run_id: str, broll_provider: str = "") -> dict:
+    """Synchronous render (CLI / local). Prefer start_render_async on web."""
+    path = run_dir(run_id)
+    if broll_provider:
+        _set_broll_provider(path, broll_provider)
+    save_run_files(
+        run_id,
+        read_text_file(path / "script.md"),
+        read_text_file(path / "package.json"),
+        read_text_file(path / "seo.json"),
+    )
+    ns = argparse.Namespace(from_dir=str(path), idea=None)
+    rc = cmd_render(ns, cfg())
+    return _render_result(run_id, rc)
+
+
+def start_render_async(run_id: str, broll_provider: str = "") -> dict:
+    """Start render in a background thread and return immediately (avoids Render 502)."""
+    path = run_dir(run_id)
+    with _render_lock:
+        existing = _render_threads.get(run_id)
+        if existing is not None and existing.is_alive():
+            return {
+                "ok": True,
+                "async": True,
+                "started": False,
+                "status": RENDERING,
+                "run_id": run_id,
+                "message": "Render already running — wait for READY_FOR_REVIEW.",
+            }
+
+        if broll_provider:
+            _set_broll_provider(path, broll_provider)
+        save_run_files(
+            run_id,
+            read_text_file(path / "script.md"),
+            read_text_file(path / "package.json"),
+            read_text_file(path / "seo.json"),
+        )
+        write_status(path, RENDERING, note="background render started")
+
+        def worker() -> None:
+            try:
+                ns = argparse.Namespace(from_dir=str(path), idea=None)
+                cmd_render(ns, cfg())
+            except Exception as exc:  # noqa: BLE001
+                write_status(
+                    path,
+                    FAILED,
+                    note=f"{exc}\n{traceback.format_exc()[:800]}",
+                )
+            finally:
+                with _render_lock:
+                    _render_threads.pop(run_id, None)
+
+        thread = threading.Thread(
+            target=worker, name=f"render-{run_id}", daemon=True
+        )
+        _render_threads[run_id] = thread
+        thread.start()
+
+    idea = load_json_file(path / "idea.json", {})
+    provider = idea.get("broll_provider") if isinstance(idea, dict) else None
+    return {
+        "ok": True,
+        "async": True,
+        "started": True,
+        "status": RENDERING,
+        "run_id": run_id,
+        "broll_provider": normalize_broll_provider(
+            provider, cfg().default_broll_provider
+        ),
+        "message": "Render started in background. Poll status until READY_FOR_REVIEW.",
+    }
 
 
 def action_approve(run_id: str) -> dict:

@@ -2,15 +2,21 @@ services:
   - type: web
     name: yt-app
     runtime: python
-    buildCommand: pip install -r pipeline/requirements.txt
-    startCommand: uvicorn ui.app:app --host 0.0.0.0 --port $PORT
+    buildCommand: bash build.sh
+    startCommand: export PATH="$HOME/bin:$PATH" && uvicorn ui.app:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
         value: "3.12.0"
       - key: LANGUAGE
         value: hi
       - key: TTS_VOICE
-        value: hi-IN-MadhurNeural
+        value: hi-IN-SwaraNeural
+      - key: TTS_RATE
+        value: "-12%"
+      - key: TTS_PITCH
+        value: "-2Hz"
+      - key: BROLL_PROVIDER
+        value: pixabay
       - key: VIDEO_FORMAT
         value: shorts
       - key: UPLOAD_PRIVACY
