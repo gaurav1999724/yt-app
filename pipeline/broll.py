@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -95,7 +96,8 @@ def _text_slide(
 
     title_font = load_font(72 if height > width else 56)
     body_font = load_font(54 if height > width else 42)
-    draw.text((72, 80), f"बीट {beat_index + 1}", font=title_font, fill=accent)
+    # English label — Hind/Nirmala render Latin+Devanagari; keep slides readable
+    draw.text((72, 80), f"Beat {beat_index + 1}", font=title_font, fill=accent)
 
     lines = _wrap(draw, label, body_font, width - 140)
     y = height // 2 - (len(lines) * 70) // 2
@@ -136,21 +138,37 @@ def _text_slide(
 
 def _download(url: str, dest: Path) -> Path:
     dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and dest.stat().st_size > 0:
+    if dest.exists() and dest.stat().st_size > 50_000:
         return dest
     headers = {"User-Agent": "youtube-agent-skill/1.0"}
-    r = requests.get(url, timeout=60, stream=True, headers=headers)
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    r = requests.get(url, timeout=90, stream=True, headers=headers)
     r.raise_for_status()
-    with open(dest, "wb") as f:
+    with open(tmp, "wb") as f:
         for chunk in r.iter_content(chunk_size=1 << 16):
             if chunk:
                 f.write(chunk)
+    if tmp.stat().st_size < 10_000:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(f"Download too small: {url}")
+    tmp.replace(dest)
     return dest
 
 
+def _pixabay_video_url(hit: dict) -> str | None:
+    videos = hit.get("videos") or {}
+    for quality in ("medium", "large", "small", "tiny"):
+        entry = videos.get(quality) or {}
+        url = entry.get("url")
+        if url:
+            return url
+    return None
+
+
 def search_pixabay(query: str, cfg: Config) -> Path | None:
-    """Prefer Pixabay video clips; fall back to photos."""
+    """Prefer Pixabay video clips; fall back to photos. Tries several hits."""
     if not cfg.pixabay_api_key:
+        print("  pixabay: no PIXABAY_API_KEY")
         return None
     q = english_search_query(query)
     cache_dir = cfg.cache_dir / "pixabay"
@@ -158,55 +176,60 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
     key = _cache_key(f"pixabay|{q}|{cfg.video_format}")
     meta_path = cache_dir / f"{key}.json"
     if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        local = Path(meta["path"])
-        if local.exists():
-            return local
-    # 1) Videos
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            local = Path(meta["path"])
+            if local.exists() and local.stat().st_size > 50_000:
+                return local
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+
+    hits: list = []
     try:
         resp = requests.get(
             "https://pixabay.com/api/videos/",
             params={
                 "key": cfg.pixabay_api_key,
                 "q": q,
-                "per_page": 5,
+                "per_page": 10,
                 "safesearch": "true",
             },
             timeout=30,
         )
         resp.raise_for_status()
         hits = resp.json().get("hits") or []
-    except requests.RequestException:
-        hits = []
+    except requests.RequestException as exc:
+        print(f"  pixabay videos error: {exc}")
 
-    if hits:
-        videos = hits[0].get("videos") or {}
-        # Prefer medium HD for Shorts/long
-        for quality in ("medium", "large", "small", "tiny"):
-            entry = videos.get(quality) or {}
-            url = entry.get("url")
-            if url:
-                dest = cache_dir / f"{key}.mp4"
-                _download(url, dest)
-                meta_path.write_text(
-                    json.dumps(
-                        {
-                            "query": query,
-                            "search_query": q,
-                            "path": str(dest),
-                            "type": "video",
-                            "provider": "pixabay",
-                            "pixabay_id": hits[0].get("id"),
-                        },
-                        indent=2,
-                        ensure_ascii=False,
-                    ),
-                    encoding="utf-8",
-                )
-                return dest
+    for hit in hits[:8]:
+        url = _pixabay_video_url(hit)
+        if not url:
+            continue
+        dest = cache_dir / f"{key}.mp4"
+        try:
+            _download(url, dest)
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "query": query,
+                        "search_query": q,
+                        "path": str(dest),
+                        "type": "video",
+                        "provider": "pixabay",
+                        "pixabay_id": hit.get("id"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            return dest
+        except (requests.RequestException, RuntimeError, OSError) as exc:
+            print(f"  pixabay video download fail id={hit.get('id')}: {exc}")
+            continue
 
-    # 2) Photos
     orientation = "vertical" if cfg.video_format == "shorts" else "horizontal"
+    photos: list = []
     try:
         resp = requests.get(
             "https://pixabay.com/api/",
@@ -216,42 +239,48 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
                 "image_type": "photo",
                 "orientation": orientation,
                 "safesearch": "true",
-                "per_page": 5,
+                "per_page": 10,
             },
             timeout=30,
         )
         resp.raise_for_status()
         photos = resp.json().get("hits") or []
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        print(f"  pixabay photos error: {exc}")
         return None
 
-    if not photos:
-        return None
-    url = photos[0].get("largeImageURL") or photos[0].get("webformatURL")
-    if not url:
-        return None
-    dest = cache_dir / f"{key}.jpg"
-    _download(url, dest)
-    meta_path.write_text(
-        json.dumps(
-            {
-                "query": query,
-                "search_query": q,
-                "path": str(dest),
-                "type": "image",
-                "provider": "pixabay",
-                "pixabay_id": photos[0].get("id"),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return dest
+    for photo in photos[:8]:
+        url = photo.get("largeImageURL") or photo.get("webformatURL")
+        if not url:
+            continue
+        dest = cache_dir / f"{key}.jpg"
+        try:
+            _download(url, dest)
+            meta_path.write_text(
+                json.dumps(
+                    {
+                        "query": query,
+                        "search_query": q,
+                        "path": str(dest),
+                        "type": "image",
+                        "provider": "pixabay",
+                        "pixabay_id": photo.get("id"),
+                    },
+                    indent=2,
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            return dest
+        except (requests.RequestException, RuntimeError, OSError) as exc:
+            print(f"  pixabay photo download fail: {exc}")
+            continue
+    return None
 
 
 def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     if not cfg.unsplash_access_key:
+        print("  unsplash: no UNSPLASH_ACCESS_KEY")
         return None
     q = english_search_query(query)
     cache_dir = cfg.cache_dir / "unsplash"
@@ -259,10 +288,13 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     key = _cache_key(f"unsplash|{q}|{cfg.video_format}")
     meta_path = cache_dir / f"{key}.json"
     if meta_path.exists():
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        local = Path(meta["path"])
-        if local.exists():
-            return local
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            local = Path(meta["path"])
+            if local.exists() and local.stat().st_size > 20_000:
+                return local
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
 
     orientation = "portrait" if cfg.video_format == "shorts" else "landscape"
     try:
@@ -271,7 +303,7 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
             headers={"Authorization": f"Client-ID {cfg.unsplash_access_key}"},
             params={
                 "query": q,
-                "per_page": 5,
+                "per_page": 8,
                 "orientation": orientation,
                 "content_filter": "high",
             },
@@ -279,48 +311,51 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
         )
         resp.raise_for_status()
         results = resp.json().get("results") or []
-    except requests.RequestException:
+    except requests.RequestException as exc:
+        print(f"  unsplash error: {exc}")
         return None
 
-    if not results:
-        return None
-
-    urls = results[0].get("urls") or {}
-    url = urls.get("regular") or urls.get("full") or urls.get("small")
-    if not url:
-        return None
-
-    dest = cache_dir / f"{key}.jpg"
-    _download(url, dest)
-
-    download_loc = (results[0].get("links") or {}).get("download_location")
-    if download_loc:
+    for result in results[:6]:
+        urls = result.get("urls") or {}
+        url = urls.get("regular") or urls.get("full") or urls.get("small")
+        if not url:
+            continue
+        dest = cache_dir / f"{key}.jpg"
         try:
-            requests.get(
-                download_loc,
-                headers={"Authorization": f"Client-ID {cfg.unsplash_access_key}"},
-                timeout=15,
-            )
-        except requests.RequestException:
-            pass
+            _download(url, dest)
+        except (requests.RequestException, RuntimeError, OSError) as exc:
+            print(f"  unsplash download fail: {exc}")
+            continue
 
-    meta_path.write_text(
-        json.dumps(
-            {
-                "query": query,
-                "search_query": q,
-                "path": str(dest),
-                "type": "image",
-                "provider": "unsplash",
-                "unsplash_id": results[0].get("id"),
-                "photographer": (results[0].get("user") or {}).get("name"),
-            },
-            indent=2,
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
-    return dest
+        download_loc = (result.get("links") or {}).get("download_location")
+        if download_loc:
+            try:
+                requests.get(
+                    download_loc,
+                    headers={"Authorization": f"Client-ID {cfg.unsplash_access_key}"},
+                    timeout=15,
+                )
+            except requests.RequestException:
+                pass
+
+        meta_path.write_text(
+            json.dumps(
+                {
+                    "query": query,
+                    "search_query": q,
+                    "path": str(dest),
+                    "type": "image",
+                    "provider": "unsplash",
+                    "unsplash_id": result.get("id"),
+                    "photographer": (result.get("user") or {}).get("name"),
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        return dest
+    return None
 
 
 def provider_for_run(run_dir: Path, cfg: Config) -> str:
@@ -328,6 +363,33 @@ def provider_for_run(run_dir: Path, cfg: Config) -> str:
     if isinstance(idea, dict) and idea.get("broll_provider"):
         return normalize_broll_provider(str(idea["broll_provider"]), cfg.default_broll_provider)
     return cfg.default_broll_provider
+
+
+def _fetch_stock(query: str, cfg: Config, preferred: str) -> tuple[Path | None, str]:
+    """Try preferred provider, then the other. Returns (path, source_label)."""
+    order = (
+        ("pixabay", "unsplash")
+        if preferred == "pixabay"
+        else ("unsplash", "pixabay")
+    )
+    for name in order:
+        found = (
+            search_pixabay(query, cfg)
+            if name == "pixabay"
+            else search_unsplash_photo(query, cfg)
+        )
+        if found is not None:
+            return found, name
+    return None, "fallback"
+
+
+def _stage_media(src: Path, dest: Path) -> Path:
+    """Copy stock media into the run folder so compose always has a stable path."""
+    if src.resolve() == dest.resolve():
+        return dest
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dest)
+    return dest
 
 
 def resolve_broll(
@@ -342,18 +404,16 @@ def resolve_broll(
     out_dir = run_dir / "broll"
     out_dir.mkdir(parents=True, exist_ok=True)
     paths: list[Path] = []
-    print(f"B-roll provider: {chosen}")
+    print(f"B-roll provider: {chosen} (auto-fallback to other API if needed)")
+    if not cfg.pixabay_api_key and not cfg.unsplash_access_key:
+        print("WARNING: No PIXABAY_API_KEY or UNSPLASH_ACCESS_KEY — text slides only")
+
+    manifest_items: list[dict] = []
     for i, query in enumerate(queries):
         dur = beat_durations[i] if i < len(beat_durations) else 3.0
         search_q = english_search_query(query)
-        found = None
-        if chosen == "pixabay":
-            found = search_pixabay(query, cfg)
-        else:
-            found = search_unsplash_photo(query, cfg)
-        source = "api" if found is not None else "fallback"
+        found, source = _fetch_stock(query, cfg, chosen)
         if found is None:
-            # Show English search term on fallback slides (Devanagari needs Noto)
             found = _text_slide(
                 out_dir / f"beat_{i:02d}.mp4",
                 cfg.width,
@@ -362,19 +422,30 @@ def resolve_broll(
                 search_q,
                 i,
             )
-        paths.append(found)
-        print(f"  beat {i+1}: search={search_q!r} source={source}")
-    manifest = [
-        {
-            "query": q,
-            "search_query": english_search_query(q),
-            "path": str(p),
-            "provider": chosen,
-        }
-        for q, p in zip(queries, paths)
-    ]
+            staged = found
+        else:
+            staged = _stage_media(found, out_dir / f"beat_{i:02d}{found.suffix.lower()}")
+        paths.append(staged)
+        print(
+            f"  beat {i+1}: search={search_q!r} source={source} "
+            f"size={staged.stat().st_size}"
+        )
+        manifest_items.append(
+            {
+                "query": query,
+                "search_query": search_q,
+                "path": str(staged),
+                "provider": chosen,
+                "source": source,
+            }
+        )
+
     (run_dir / "broll.json").write_text(
-        json.dumps({"provider": chosen, "items": manifest}, indent=2, ensure_ascii=False),
+        json.dumps(
+            {"provider": chosen, "items": manifest_items},
+            indent=2,
+            ensure_ascii=False,
+        ),
         encoding="utf-8",
     )
     return paths

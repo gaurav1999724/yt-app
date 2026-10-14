@@ -147,10 +147,16 @@ function bindRunPage() {
     try {
       await saveFirst(btn);
       const provider = selectedProvider();
-      toast(`Render (${provider}) background mein start...`);
-      // Don't pass btn — postForm would re-enable it; keep disabled while polling
+      toast(`Render (${provider}) queue ho raha hai...`);
       btn.disabled = true;
-      const data = await postForm(`/api/runs/${runId}/render`, form, null);
+      // Tiny body only — do NOT resend full script form (keeps POST under Render limits)
+      const fd = new FormData();
+      fd.append("broll_provider", provider);
+      const res = await fetch(`/api/runs/${runId}/render`, { method: "POST", body: fd });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.ok === false) {
+        throw new Error(data.error || `Render queue failed (${res.status})`);
+      }
       await refreshStatus(data.status || "RENDERING");
       if (data.status === "READY_FOR_REVIEW") {
         toast(`Render done — ${data.status}`, "ok");

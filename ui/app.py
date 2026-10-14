@@ -5,7 +5,7 @@ from __future__ import annotations
 import traceback
 from pathlib import Path
 
-from fastapi import FastAPI, Form, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -17,6 +17,12 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
 app = FastAPI(title="YouTube Pipeline UI", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
+
+
+@app.get("/healthz")
+def healthz():
+    """Cheap liveness for Render — must stay fast even while a render runs."""
+    return {"ok": True}
 
 
 @app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
@@ -94,15 +100,24 @@ def api_save(
 
 
 @app.post("/api/runs/{run_id}/render")
-def api_render(run_id: str, broll_provider: str = Form("")):
-    """Start render in background — returns immediately (Render proxy times out ~30–100s)."""
+def api_render(
+    run_id: str,
+    background_tasks: BackgroundTasks,
+    broll_provider: str = Form(""),
+):
+    """Queue render and return immediately (BackgroundTasks runs after response is sent)."""
     try:
-        result = services.start_render_async(run_id, broll_provider=broll_provider)
+        result = services.queue_render(run_id, broll_provider=broll_provider)
+    except FileNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         return JSONResponse(
             {"ok": False, "error": str(exc), "trace": traceback.format_exc()},
             status_code=500,
         )
+    if result.get("started"):
+        # Critical: start AFTER HTTP response — avoids Render 502 / proxy timeout
+        background_tasks.add_task(services.execute_queued_render, run_id)
     return result
 
 

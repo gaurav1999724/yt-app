@@ -4,18 +4,21 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
+import sys
 import threading
 import traceback
 from pathlib import Path
 
-from pipeline.config import Config, load_config, normalize_broll_provider
+from pipeline.config import Config, ROOT, load_config, normalize_broll_provider
 from pipeline.jsonutil import load_json_file, parse_json_text
 from pipeline.run import cmd_approve, cmd_init, cmd_render, cmd_upload
 from pipeline.status import FAILED, RENDERING, read_status, write_status
 
-# In-process render jobs (needed on Render — HTTP can't wait 1–3 min)
+# Track in-flight renders (subprocess PIDs) so we don't double-start
 _render_lock = threading.Lock()
-_render_threads: dict[str, threading.Thread] = {}
+_render_procs: dict[str, subprocess.Popen] = {}
 
 
 def cfg() -> Config:
@@ -273,12 +276,12 @@ def action_render(run_id: str, broll_provider: str = "") -> dict:
     return _render_result(run_id, rc)
 
 
-def start_render_async(run_id: str, broll_provider: str = "") -> dict:
-    """Start render in a background thread and return immediately (avoids Render 502)."""
+def queue_render(run_id: str, broll_provider: str = "") -> dict:
+    """Mark run RENDERING and return immediately. Call execute_queued_render after response."""
     path = run_dir(run_id)
     with _render_lock:
-        existing = _render_threads.get(run_id)
-        if existing is not None and existing.is_alive():
+        proc = _render_procs.get(run_id)
+        if proc is not None and proc.poll() is None:
             return {
                 "ok": True,
                 "async": True,
@@ -287,36 +290,9 @@ def start_render_async(run_id: str, broll_provider: str = "") -> dict:
                 "run_id": run_id,
                 "message": "Render already running — wait for READY_FOR_REVIEW.",
             }
-
         if broll_provider:
             _set_broll_provider(path, broll_provider)
-        save_run_files(
-            run_id,
-            read_text_file(path / "script.md"),
-            read_text_file(path / "package.json"),
-            read_text_file(path / "seo.json"),
-        )
-        write_status(path, RENDERING, note="background render started")
-
-        def worker() -> None:
-            try:
-                ns = argparse.Namespace(from_dir=str(path), idea=None)
-                cmd_render(ns, cfg())
-            except Exception as exc:  # noqa: BLE001
-                write_status(
-                    path,
-                    FAILED,
-                    note=f"{exc}\n{traceback.format_exc()[:800]}",
-                )
-            finally:
-                with _render_lock:
-                    _render_threads.pop(run_id, None)
-
-        thread = threading.Thread(
-            target=worker, name=f"render-{run_id}", daemon=True
-        )
-        _render_threads[run_id] = thread
-        thread.start()
+        write_status(path, RENDERING, note="queued — background subprocess")
 
     idea = load_json_file(path / "idea.json", {})
     provider = idea.get("broll_provider") if isinstance(idea, dict) else None
@@ -329,8 +305,77 @@ def start_render_async(run_id: str, broll_provider: str = "") -> dict:
         "broll_provider": normalize_broll_provider(
             provider, cfg().default_broll_provider
         ),
-        "message": "Render started in background. Poll status until READY_FOR_REVIEW.",
+        "message": "Render queued. Poll status until READY_FOR_REVIEW.",
     }
+
+
+def execute_queued_render(run_id: str) -> None:
+    """Run render in a separate process so uvicorn survives OOM / long work (Render 502 fix)."""
+    path = run_dir(run_id)
+    env = os.environ.copy()
+    # Ensure ffmpeg from Render build.sh is visible
+    home_bin = str(Path.home() / "bin")
+    env["PATH"] = home_bin + os.pathsep + env.get("PATH", "")
+    env["PYTHONPATH"] = str(ROOT) + os.pathsep + env.get("PYTHONPATH", "")
+
+    log_path = path / "render.log"
+    cmd = [
+        sys.executable,
+        "-m",
+        "pipeline.run",
+        "render",
+        "--from-dir",
+        str(path),
+    ]
+    try:
+        with open(log_path, "w", encoding="utf-8") as log:
+            log.write(f"$ {' '.join(cmd)}\n")
+            log.flush()
+            proc = subprocess.Popen(
+                cmd,
+                cwd=str(ROOT),
+                env=env,
+                stdout=log,
+                stderr=subprocess.STDOUT,
+            )
+        with _render_lock:
+            _render_procs[run_id] = proc
+        rc = proc.wait()
+        if rc != 0 and read_status(path) == RENDERING:
+            # cmd_render usually writes FAILED; fill in if process died hard (OOM)
+            tail = ""
+            if log_path.exists():
+                try:
+                    tail = log_path.read_text(encoding="utf-8", errors="replace")[-600:]
+                except OSError:
+                    pass
+            write_status(
+                path,
+                FAILED,
+                note=f"render subprocess exit {rc}\n{tail}",
+            )
+    except Exception as exc:  # noqa: BLE001
+        write_status(
+            path,
+            FAILED,
+            note=f"{exc}\n{traceback.format_exc()[:800]}",
+        )
+    finally:
+        with _render_lock:
+            _render_procs.pop(run_id, None)
+
+
+# Back-compat alias
+def start_render_async(run_id: str, broll_provider: str = "") -> dict:
+    result = queue_render(run_id, broll_provider=broll_provider)
+    if result.get("started"):
+        threading.Thread(
+            target=execute_queued_render,
+            args=(run_id,),
+            name=f"render-{run_id}",
+            daemon=True,
+        ).start()
+    return result
 
 
 def action_approve(run_id: str) -> dict:
