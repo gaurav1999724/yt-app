@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -13,6 +14,36 @@ from PIL import Image, ImageDraw
 from pipeline.config import Config, normalize_broll_provider
 from pipeline.fonts import load_font
 from pipeline.jsonutil import load_json_file
+
+# Pixabay/Unsplash search poorly with Devanagari — map to English stock terms
+_HINDI_FALLBACK_KEYWORDS = [
+    "youtube analytics dashboard",
+    "retention graph chart",
+    "person scrolling phone",
+    "content creator studio",
+    "smartphone social media",
+    "hook attention closeup",
+    "checklist notepad desk",
+    "audience watching video",
+    "laptop typing workspace",
+    "red warning alert screen",
+]
+
+
+def english_search_query(raw: str) -> str:
+    """Build an English stock-search query from an ON SCREEN cue."""
+    text = (raw or "").strip()
+    if not text:
+        return "technology abstract"
+    # Prefer Latin tokens / quoted English already in the cue
+    latin = re.findall(r"[A-Za-z][A-Za-z0-9+\-]{1,}", text)
+    if latin:
+        return " ".join(latin[:8])
+    # Hindi-only cue → stable generic English keyword
+    idx = int(hashlib.sha1(text.encode("utf-8")).hexdigest(), 16) % len(
+        _HINDI_FALLBACK_KEYWORDS
+    )
+    return _HINDI_FALLBACK_KEYWORDS[idx]
 
 _FALLBACK_PALETTES = [
     ((20, 40, 90), (245, 197, 66), (245, 247, 250)),
@@ -121,17 +152,16 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
     """Prefer Pixabay video clips; fall back to photos."""
     if not cfg.pixabay_api_key:
         return None
+    q = english_search_query(query)
     cache_dir = cfg.cache_dir / "pixabay"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(f"pixabay|{query}|{cfg.video_format}")
+    key = _cache_key(f"pixabay|{q}|{cfg.video_format}")
     meta_path = cache_dir / f"{key}.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         local = Path(meta["path"])
         if local.exists():
             return local
-
-    q = " ".join(query.split())[:100]
     # 1) Videos
     try:
         resp = requests.get(
@@ -162,12 +192,14 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
                     json.dumps(
                         {
                             "query": query,
+                            "search_query": q,
                             "path": str(dest),
                             "type": "video",
                             "provider": "pixabay",
                             "pixabay_id": hits[0].get("id"),
                         },
                         indent=2,
+                        ensure_ascii=False,
                     ),
                     encoding="utf-8",
                 )
@@ -204,12 +236,14 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
         json.dumps(
             {
                 "query": query,
+                "search_query": q,
                 "path": str(dest),
                 "type": "image",
                 "provider": "pixabay",
                 "pixabay_id": photos[0].get("id"),
             },
             indent=2,
+            ensure_ascii=False,
         ),
         encoding="utf-8",
     )
@@ -219,9 +253,10 @@ def search_pixabay(query: str, cfg: Config) -> Path | None:
 def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
     if not cfg.unsplash_access_key:
         return None
+    q = english_search_query(query)
     cache_dir = cfg.cache_dir / "unsplash"
     cache_dir.mkdir(parents=True, exist_ok=True)
-    key = _cache_key(f"unsplash|{query}|{cfg.video_format}")
+    key = _cache_key(f"unsplash|{q}|{cfg.video_format}")
     meta_path = cache_dir / f"{key}.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
@@ -235,7 +270,7 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
             "https://api.unsplash.com/search/photos",
             headers={"Authorization": f"Client-ID {cfg.unsplash_access_key}"},
             params={
-                "query": query,
+                "query": q,
                 "per_page": 5,
                 "orientation": orientation,
                 "content_filter": "high",
@@ -273,6 +308,7 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
         json.dumps(
             {
                 "query": query,
+                "search_query": q,
                 "path": str(dest),
                 "type": "image",
                 "provider": "unsplash",
@@ -280,6 +316,7 @@ def search_unsplash_photo(query: str, cfg: Config) -> Path | None:
                 "photographer": (results[0].get("user") or {}).get("name"),
             },
             indent=2,
+            ensure_ascii=False,
         ),
         encoding="utf-8",
     )
@@ -308,23 +345,32 @@ def resolve_broll(
     print(f"B-roll provider: {chosen}")
     for i, query in enumerate(queries):
         dur = beat_durations[i] if i < len(beat_durations) else 3.0
+        search_q = english_search_query(query)
         found = None
         if chosen == "pixabay":
             found = search_pixabay(query, cfg)
         else:
             found = search_unsplash_photo(query, cfg)
+        source = "api" if found is not None else "fallback"
         if found is None:
+            # Show English search term on fallback slides (Devanagari needs Noto)
             found = _text_slide(
                 out_dir / f"beat_{i:02d}.mp4",
                 cfg.width,
                 cfg.height,
                 max(dur, 2.0),
-                query,
+                search_q,
                 i,
             )
         paths.append(found)
+        print(f"  beat {i+1}: search={search_q!r} source={source}")
     manifest = [
-        {"query": q, "path": str(p), "provider": chosen}
+        {
+            "query": q,
+            "search_query": english_search_query(q),
+            "path": str(p),
+            "provider": chosen,
+        }
         for q, p in zip(queries, paths)
     ]
     (run_dir / "broll.json").write_text(

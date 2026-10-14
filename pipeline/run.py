@@ -154,8 +154,15 @@ def cmd_render(args: argparse.Namespace, cfg: Config) -> int:
 
         parsed = parse_script_file(script_path)
         audio_path = run_dir / "audio.mp3"
-        print(f"TTS ({cfg.tts_voice})...")
-        tts = synthesize(parsed.full_spoken, cfg.tts_voice, audio_path)
+        print(f"TTS ({cfg.tts_voice}, rate={cfg.tts_rate}, pitch={cfg.tts_pitch})...")
+        tts = synthesize(
+            parsed.full_spoken,
+            cfg.tts_voice,
+            audio_path,
+            rate=cfg.tts_rate,
+            pitch=cfg.tts_pitch,
+            language=cfg.language,
+        )
         print(f"Audio duration: {tts.duration:.1f}s")
 
         queries = [b.on_screen for b in parsed.beats]

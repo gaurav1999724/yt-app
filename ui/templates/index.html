@@ -8,7 +8,7 @@
   </div>
   <div class="pill-row">
     <span class="pill">Lang <strong>{{ config.language }}</strong></span>
-    <span class="pill">Voice <strong>{{ config.tts_voice }}</strong></span>
+    <span class="pill">Voice <strong>{{ config.tts_voice }}</strong> · {{ config.tts_rate }}</span>
     <span class="pill">Format <strong>{{ config.video_format }}</strong></span>
     <span class="pill">B-roll default <strong>{{ config.default_broll_provider }}</strong></span>
     <span class="pill {% if config.pixabay_configured %}on{% else %}off{% endif %}">

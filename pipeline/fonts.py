@@ -1,4 +1,4 @@
-"""Shared font loading with Hindi (Devanagari) support on Windows."""
+"""Shared font loading with Hindi (Devanagari) support."""
 
 from __future__ import annotations
 
@@ -6,8 +6,13 @@ from pathlib import Path
 
 from PIL import ImageFont
 
-# Prefer fonts that render Devanagari correctly
+PIPELINE_DIR = Path(__file__).resolve().parent
+BUNDLED_FONT = PIPELINE_DIR / "assets" / "fonts" / "NotoSansDevanagari-Bold.ttf"
+BUNDLED_FONT_DIR = PIPELINE_DIR / "assets" / "fonts"
+
+# Prefer bundled Noto first (works on Render + Windows even without system Hindi fonts)
 _FONT_CANDIDATES = [
+    str(BUNDLED_FONT),
     "C:/Windows/Fonts/Nirmala.ttf",
     "C:/Windows/Fonts/nirmala.ttf",
     "C:/Windows/Fonts/NirmalaB.ttf",
@@ -32,7 +37,9 @@ def load_font(size: int) -> ImageFont.ImageFont | ImageFont.FreeTypeFont:
 
 
 def ass_font_name() -> str:
-    """Font family name for ASS captions (must match an installed face)."""
+    """Font family name for ASS captions (must match an installed / fontsdir face)."""
+    if BUNDLED_FONT.exists():
+        return "Noto Sans Devanagari"
     if Path("C:/Windows/Fonts/Nirmala.ttf").exists() or Path(
         "C:/Windows/Fonts/nirmala.ttf"
     ).exists():
@@ -42,3 +49,10 @@ def ass_font_name() -> str:
     ).exists():
         return "Mangal"
     return "Arial"
+
+
+def ass_fonts_dir() -> Path | None:
+    """Directory to pass to ffmpeg subtitles filter as fontsdir=."""
+    if BUNDLED_FONT_DIR.exists():
+        return BUNDLED_FONT_DIR
+    return None

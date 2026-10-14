@@ -13,8 +13,11 @@ description: >-
 One idea into a script somebody finishes.
 
 When the user runs the faceless pipeline (`LANGUAGE=hi` / Hindi channel), write the
-spoken script in **Hindi**. Keep `[ON SCREEN: ...]` cues in clear visual English or
-Hindi nouns that Unsplash can search (e.g. `person scrolling phone`, `checklist notepad`).
+spoken script in **Devanagari Hindi** (not Latin Hinglish) so TTS sounds like a real
+Indian creator. Keep brand words in English if needed — the pipeline maps YouTube/CTR/SEO
+to Hindi pronunciation. Put **English stock-search keywords** inside
+`[ON SCREEN: ...]` (Pixabay/Unsplash need English), e.g.
+`[ON SCREEN: youtube analytics retention graph]`.
 
 Two tools live in this folder and both actually run. Use them. Do not eyeball the hook.
 

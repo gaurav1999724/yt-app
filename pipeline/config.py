@@ -38,6 +38,8 @@ class Config:
     youtube_client_secrets: Path
     youtube_token_path: Path
     tts_voice: str
+    tts_rate: str
+    tts_pitch: str
     language: str
     output_dir: Path
     cache_dir: Path
@@ -64,8 +66,9 @@ def load_config() -> Config:
     if privacy not in ("private", "unlisted", "public"):
         privacy = "private"
     language = os.getenv("LANGUAGE", "hi").strip().lower() or "hi"
+    # Swara tends to sound more natural for Hindi explainers; Madhur = male.
     default_voice = (
-        "hi-IN-MadhurNeural" if language.startswith("hi") else "en-US-GuyNeural"
+        "hi-IN-SwaraNeural" if language.startswith("hi") else "en-US-GuyNeural"
     )
     return Config(
         pixabay_api_key=os.getenv("PIXABAY_API_KEY", "").strip(),
@@ -82,6 +85,9 @@ def load_config() -> Config:
             PIPELINE_DIR / "token.json",
         ),
         tts_voice=os.getenv("TTS_VOICE", default_voice).strip() or default_voice,
+        # Slower + slightly lower pitch = less "robot / AI announcer"
+        tts_rate=os.getenv("TTS_RATE", "-12%").strip() or "-12%",
+        tts_pitch=os.getenv("TTS_PITCH", "-2Hz").strip() or "-2Hz",
         language=language,
         output_dir=_path(os.getenv("OUTPUT_DIR"), ROOT / "workspace" / "runs"),
         cache_dir=_path(os.getenv("CACHE_DIR"), ROOT / "workspace" / "cache"),

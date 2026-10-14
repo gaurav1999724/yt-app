@@ -281,6 +281,8 @@ def config_summary() -> dict:
     return {
         "language": c.language,
         "tts_voice": c.tts_voice,
+        "tts_rate": c.tts_rate,
+        "tts_pitch": c.tts_pitch,
         "video_format": c.video_format,
         "upload_privacy": c.upload_privacy,
         "output_dir": str(c.output_dir),

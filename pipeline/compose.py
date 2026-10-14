@@ -10,6 +10,7 @@ from pathlib import Path
 
 from pipeline.captions import write_ass, write_srt
 from pipeline.config import Config
+from pipeline.fonts import ass_fonts_dir
 from pipeline.tts import TtsResult
 
 
@@ -189,7 +190,17 @@ def compose_video(
         ]
         burned = False
         if tts.words:
-            for vf in ("ass=captions.ass", "subtitles=captions.ass"):
+            fonts = ass_fonts_dir()
+            vf_candidates = ["ass=captions.ass", "subtitles=captions.ass"]
+            if fonts is not None:
+                # Escape for ffmpeg filter on Windows (drive letter colon)
+                fonts_esc = fonts.resolve().as_posix().replace(":", "\\:")
+                vf_candidates = [
+                    f"ass=captions.ass:fontsdir='{fonts_esc}'",
+                    f"subtitles=captions.ass:fontsdir='{fonts_esc}'",
+                    *vf_candidates,
+                ]
+            for vf in vf_candidates:
                 result = subprocess.run(
                     base_cmd + ["-vf", vf] + encode_tail,
                     capture_output=True,
