@@ -1,24 +1,18 @@
 # The YouTube agent skill
 
-Eleven Claude skills that run a YouTube channel. Free, MIT, no signup, no API key, nothing to
-connect.
+Fourteen Claude skills that run a YouTube channel. The original eleven write scripts, packaging,
+plans, and audits. Three more drive a **faceless** pipeline: render an MP4 + thumbnail, then upload
+only after you say **ship it**.
 
-One of them writes your script off 21 hook formulas and scores the hook before you waste a take on
-it. One lints the title and the thumbnail as a single pairing, because writing them separately is
-why half of your click surface says the same thing twice. One reads your audience-retention export
-and tells you the exact second people left and what you were saying when they did. One turns a
-transcript into an edit decision list. One finds the Shorts already hiding inside a long video. One
-goes and finds what is working in your niche and ranks it by how far each video beat its own
-channel, not by how big the channel is.
-
-**Nothing gets published until you do it.** These skills write. You upload.
+**Content skills write. Nothing goes public until you approve.** `/yt-upload` is the only publisher,
+and it refuses unless `STATUS=APPROVED`.
 
 ## Install
 
 Paste this into Claude:
 
 ```
-https://github.com/Jakeschincariol/youtube-agent-skill
+https://github.com/gaurav1999724/yt-app
 
 Install this skill, then confirm /yt-script works.
 ```
@@ -26,14 +20,14 @@ Install this skill, then confirm /yt-script works.
 Or do it yourself, in Claude Code:
 
 ```bash
-git clone https://github.com/Jakeschincariol/youtube-agent-skill.git
-cp -r youtube-agent-skill/skills/yt-* ~/.claude/skills/
+git clone https://github.com/gaurav1999724/yt-app.git
+cp -r yt-app/skills/yt-* ~/.claude/skills/
 ```
 
 Or as a plugin:
 
 ```
-/plugin marketplace add Jakeschincariol/youtube-agent-skill
+/plugin marketplace add gaurav1999724/yt-app
 /plugin install youtube-agent
 ```
 
@@ -44,10 +38,9 @@ rest works.
 
 Then spend ten minutes on [`templates/voice.md`](templates/voice.md). Copy it to
 `~/.claude/youtube/voice.md` and fill it in, or send Claude three of your own videos and say "write
-my voice.md from these". Every skill reads that file. It matters more here than anywhere else,
-because you have to say the words out loud.
+my voice.md from these". Every skill reads that file. It matters more here than anywhere else.
 
-## The eleven
+## The fourteen
 
 | command | what it does |
 | --- | --- |
@@ -62,6 +55,9 @@ because you have to say the words out loud.
 | `/yt-seo` | The description, the tags that are worth having, and the three queries this should win. |
 | `/yt-chapters` | Chapters from a transcript, validated against YouTube's own rules so they render. |
 | `/yt-audit` | The whole channel, ending in ONE fix rather than twenty. |
+| `/yt-pipeline` | End-to-end conductor: idea → script → package → SEO → render → stop for ship-it. |
+| `/yt-render` | Faceless MP4: TTS + B-roll + captions + thumbnail. Sets `READY_FOR_REVIEW`. |
+| `/yt-upload` | YouTube Data API upload. **Only** after you say ship it (`STATUS=APPROVED`). |
 
 ## The six tools
 
@@ -77,14 +73,84 @@ python3 skills/yt-retention/retention.py retention.csv         # where they left
 python3 skills/yt-viral/swipe.py collected.json --min 2.0      # outliers by own-channel multiple
 ```
 
+## Local UI (button clicks, no login)
+
+A small local dashboard so you can run every step with buttons — no command pasting, no auth.
+
+```bash
+pip install -r pipeline/requirements.txt
+python -m ui
+```
+
+Or double-click `start_ui.bat` on Windows. Open **http://127.0.0.1:8765**
+
+Flow in the UI: **Create run → Save/edit → Render video → Approve (ship it) → Upload to YouTube**.
+
+Binds to localhost only. Do not expose it to the public internet (there is no login).
+
+## Faceless pipeline
+
+Auto-generate a faceless video (no camera), review it, then upload when you approve.
+
+### Setup
+
+1. **Python 3.10+** and **FFmpeg** on your PATH.
+2. Install pipeline deps from the repo root:
+
+```bash
+pip install -r pipeline/requirements.txt
+```
+
+3. Copy config and edit:
+
+```bash
+cp pipeline/config.example.env pipeline/.env
+```
+
+Set at least:
+
+- `LANGUAGE` — `hi` (Hindi, default) or `en`
+- `TTS_VOICE` — Hindi: `hi-IN-MadhurNeural` / `hi-IN-SwaraNeural` (`edge-tts --list-voices`)
+- `VIDEO_FORMAT` — `shorts` (1080x1920) or `long` (1920x1080)
+- `UPLOAD_PRIVACY` — keep `private` until you trust the pipeline
+- `UNSPLASH_ACCESS_KEY` — optional; without it, Hindi text-slide placeholders are used ([unsplash.com/developers](https://unsplash.com/developers))
+- `YOUTUBE_CLIENT_SECRETS` — path to Google OAuth Desktop client JSON
+
+4. Google Cloud: enable **YouTube Data API v3**, create an OAuth **Desktop** client, download JSON to
+   `pipeline/client_secrets.json`. First upload opens a browser; token lands in `pipeline/token.json`.
+
+### CLI
+
+```bash
+# Seed a run from fixture files (or your own script/package/seo)
+python -m pipeline all-render \
+  --idea "पहले 15 सेकंड रिटेंशन खत्म कर रहे हैं" \
+  --script-file pipeline/fixtures/sample_script.md \
+  --package-json pipeline/fixtures/sample_package.json \
+  --seo-json pipeline/fixtures/sample_seo.json
+
+# Review video.mp4 + thumb.png in the printed workspace/runs/<id>/ folder
+# When ready:
+python -m pipeline approve --from-dir workspace/runs/<id>
+python -m pipeline upload --from-dir workspace/runs/<id>
+```
+
+Stages: `init` → `render` → (`STATUS=READY_FOR_REVIEW`) → `approve` → `upload`.
+
+Each run folder holds `idea.json`, `script.md`, `package.json`, `seo.json`, `audio.mp3`,
+`video.mp4`, `thumb.png`, `upload.json`, and `STATUS`.
+
+Agent entry points: `/yt-pipeline` (conductor), `/yt-render`, `/yt-upload`.
+
+### Approval gate
+
+1. Render finishes with `READY_FOR_REVIEW`.
+2. You watch the files. Last question: **ship it, or change it?**
+3. Ship it → `approve` then `upload`. Change it → edit and re-render. No silent publishes.
+
 ## The fine print
 
-The part most packs leave out.
-
-**It does not publish.** YouTube's Data API would allow it with your own OAuth, which makes this
-pack different from the LinkedIn and Instagram ones, where posting is not available at all. It is
-still not built here: every skill ends in a block you copy and a question — ship it, or change it?
-Anything that claims to run your channel unattended should be read with that distinction in mind.
+**Upload is opt-in per video.** OAuth is yours. Unattended auto-upload is not supported.
 
 **`hookscore.py` is a heuristic, not a predictor.** The panel was built and calibrated against 74
 real short-form hooks (the first 15 seconds of auto-captions, top-8 and bottom-8 by views across
@@ -103,6 +169,10 @@ touches your credentials.
 
 **Nothing invents a number.** If a skill wants a figure it does not have, it asks you for it or
 writes the line without it.
+
+## Author
+
+**Gaurav Kumar** — [github.com/gaurav1999724/yt-app](https://github.com/gaurav1999724/yt-app)
 
 ## Licence
 

@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}Pipeline Home{% endblock %}
+{% block body %}
+<header class="topbar">
+  <div>
+    <div class="brand">YouTube Pipeline</div>
+    <div class="tagline">Button se chalao — command paste ki zaroorat nahi. No login.</div>
+  </div>
+  <div class="pill-row">
+    <span class="pill">Lang <strong>{{ config.language }}</strong></span>
+    <span class="pill">Voice <strong>{{ config.tts_voice }}</strong></span>
+    <span class="pill">Format <strong>{{ config.video_format }}</strong></span>
+    <span class="pill {% if config.unsplash_configured %}on{% else %}off{% endif %}">
+      Unsplash {% if config.unsplash_configured %}OK{% else %}missing{% endif %}
+    </span>
+    <span class="pill {% if config.youtube_secrets_present %}on{% else %}off{% endif %}">
+      YouTube OAuth {% if config.youtube_secrets_present %}OK{% else %}missing{% endif %}
+    </span>
+  </div>
+</header>
+
+<div class="grid">
+  <section class="panel">
+    <h2>1. Nayi run banao</h2>
+    <form id="create-form">
+      <label for="idea">Idea / working title (Hindi)</label>
+      <input id="idea" name="idea" type="text" required placeholder="पहले 15 सेकंड रिटेंशन खत्म कर रहे हैं" />
+
+      <label for="script">Script (optional — baad mein bhi edit kar sakte ho)</label>
+      <textarea id="script" name="script" placeholder="# स्क्रिप्ट
+
+[ON SCREEN: person scrolling phone]
+
+यहाँ बोलने वाला हिंदी स्क्रिप्ट..."></textarea>
+
+      <label for="package_json">package.json (optional)</label>
+      <textarea id="package_json" name="package_json" class="code">{"title":"","thumbnail_text":"नई वीडियो","thumbnail_brief":"हाई कंट्रास्ट हिंदी टेक्स्ट"}</textarea>
+
+      <label for="seo_json">seo.json (optional)</label>
+      <textarea id="seo_json" name="seo_json" class="code">{"title":"","description":"","tags":[],"category_id":"22"}</textarea>
+
+      <div class="actions">
+        <button class="btn btn-primary" type="submit">Create run</button>
+      </div>
+      <p class="note">Create ke baad Render → preview → Approve (ship it) → Upload. Har step alag button hai.</p>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>2. Pehli runs</h2>
+    {% if runs %}
+    <div class="run-list">
+      {% for r in runs %}
+      <a class="run-card" href="/runs/{{ r.id }}">
+        {% if r.has_thumb %}
+        <img src="/media/{{ r.id }}/thumb.feed.png" alt="" onerror="this.src='/media/{{ r.id }}/thumb.png'" />
+        {% else %}
+        <img alt="" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='88' height='50'%3E%3Crect fill='%23ddd4c4' width='100%25' height='100%25'/%3E%3C/svg%3E" />
+        {% endif %}
+        <div>
+          <h3>{{ r.idea }}</h3>
+          <p>{{ r.id }}</p>
+        </div>
+        <span class="status {{ r.status }}">{{ r.status }}</span>
+      </a>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="empty">Abhi koi run nahi. Left se pehli run banao — ya pehle sample fixtures se CLI test kiya ho to yahan list dikhegi.</p>
+    {% endif %}
+  </section>
+</div>
+{% endblock %}

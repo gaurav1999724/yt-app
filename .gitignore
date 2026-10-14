@@ -1,3 +1,16 @@
 __pycache__/
 *.pyc
 .DS_Store
+.env
+pipeline/.env
+pipeline/client_secrets.json
+pipeline/token.json
+**/client_secrets.json
+**/token.json
+workspace/runs/*/
+workspace/cache/**
+!workspace/runs/.gitkeep
+!workspace/cache/.gitkeep
+*.mp4
+*.mp3
+*.words.json

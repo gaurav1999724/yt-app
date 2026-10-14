@@ -12,6 +12,10 @@ description: >-
 
 One idea into a script somebody finishes.
 
+When the user runs the faceless pipeline (`LANGUAGE=hi` / Hindi channel), write the
+spoken script in **Hindi**. Keep `[ON SCREEN: ...]` cues in clear visual English or
+Hindi nouns that Unsplash can search (e.g. `person scrolling phone`, `checklist notepad`).
+
 Two tools live in this folder and both actually run. Use them. Do not eyeball the hook.
 
 ```bash

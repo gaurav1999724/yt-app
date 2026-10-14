@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}{{ run.idea.idea or run.id }} · Pipeline{% endblock %}
+{% block body %}
+<a class="back" href="/">← Saari runs</a>
+
+<header class="topbar">
+  <div>
+    <div class="brand" style="font-size:1.7rem">{{ run.idea.idea or run.id }}</div>
+    <div class="tagline">{{ run.id }}</div>
+  </div>
+  <div class="pill-row">
+    <span id="status-badge" class="status {{ run.status }}">{{ run.status }}</span>
+    <span class="pill">Privacy default <strong>{{ config.upload_privacy }}</strong></span>
+  </div>
+</header>
+
+<div class="steps">
+  <div class="step"><b>Step 1</b><span>Save / edit</span></div>
+  <div class="step"><b>Step 2</b><span>Render video</span></div>
+  <div class="step"><b>Step 3</b><span>Approve (ship it)</span></div>
+  <div class="step"><b>Step 4</b><span>Upload YouTube</span></div>
+</div>
+
+<div class="grid" id="run-root" data-run-id="{{ run.id }}">
+  <section class="panel">
+    <h2>Content</h2>
+    <form id="run-form">
+      <label for="script">script.md</label>
+      <textarea id="script" name="script">{{ run.script }}</textarea>
+
+      <label for="package_json">package.json</label>
+      <textarea id="package_json" name="package_json" class="code">{{ run.package_raw }}</textarea>
+
+      <label for="seo_json">seo.json</label>
+      <textarea id="seo_json" name="seo_json" class="code">{{ run.seo_raw }}</textarea>
+
+      <div class="actions">
+        <button class="btn btn-ghost" type="button" id="btn-save">Save files</button>
+        <button class="btn btn-secondary" type="button" id="btn-render">Render video</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Preview & publish</h2>
+
+    <div class="preview">
+      {% if run.has_thumb %}
+      <img src="/media/{{ run.id }}/thumb.png?t={{ cache_bust }}" alt="thumbnail" />
+      {% else %}
+      <img alt="no thumb" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='80'%3E%3Crect fill='%23ddd4c4' width='100%25' height='100%25'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' fill='%235c564c' font-size='12'%3Eno thumb%3C/text%3E%3C/svg%3E" />
+      {% endif %}
+
+      <div>
+        {% if run.has_video %}
+        <video controls playsinline src="/media/{{ run.id }}/video.mp4?t={{ cache_bust }}"></video>
+        {% else %}
+        <p class="empty">Video abhi nahi — pehle <strong>Render video</strong> dabao.</p>
+        {% endif %}
+        {% if run.video_meta.duration %}
+        <p class="note">Runtime ~ {{ '%.1f'|format(run.video_meta.duration) }}s · {{ run.video_meta.width }}×{{ run.video_meta.height }}</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <label for="privacy">Upload privacy</label>
+    <input id="privacy" name="privacy" type="text" value="{{ config.upload_privacy }}" list="privacy-opts" />
+    <datalist id="privacy-opts">
+      <option value="private"></option>
+      <option value="unlisted"></option>
+      <option value="public"></option>
+    </datalist>
+
+    <div class="actions">
+      <button class="btn btn-warn" type="button" id="btn-approve">Approve · ship it</button>
+      <button class="btn btn-ok" type="button" id="btn-upload">Upload to YouTube</button>
+    </div>
+
+    {% if run.upload.url %}
+    <p class="note">Last upload:
+      <a class="link-out" id="yt-link" href="{{ run.upload.url }}" target="_blank" rel="noopener">{{ run.upload.url }}</a>
+    </p>
+    {% else %}
+    <p class="note">Upload ke baad YouTube link yahan aayega.
+      <a class="link-out" id="yt-link" href="#" hidden target="_blank" rel="noopener"></a>
+    </p>
+    {% endif %}
+
+    <p class="note">
+      Approve se pehle video dekho. Upload sirf APPROVED status pe chalega.
+      Pehli upload pe Google browser login khul sakta hai (terminal/UI server process).
+    </p>
+  </section>
+</div>
+{% endblock %}

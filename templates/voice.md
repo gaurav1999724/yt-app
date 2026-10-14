@@ -31,3 +31,16 @@ skills refuse them for you instead of you catching it in the edit.
 
 Length, how a video opens, whether there is an intro, whether you swear, whether you appear on
 camera, what the desk looks like.
+
+## Faceless pipeline
+
+Fill this in if you use `/yt-pipeline` / `/yt-render` (auto TTS + B-roll, no camera).
+
+- **Language:** `hi` (Hindi) by default. Scripts, titles, SEO in Hindi.
+- **Niche:** one sentence.
+- **Cadence:** e.g. 3 Shorts / week.
+- **Preferred length:** `shorts` (vertical) or `long` (16:9). Match `VIDEO_FORMAT` in `.env`.
+- **TTS voice:** Hindi — `hi-IN-MadhurNeural` (male) or `hi-IN-SwaraNeural` (female). List: `edge-tts --list-voices`.
+- **B-roll:** Unsplash (`UNSPLASH_ACCESS_KEY`). Without key, Hindi text slides are used.
+- **Brand colors:** background / foreground / accent hex for thumbnails.
+- **Default privacy after ship-it:** `private` (recommended), `unlisted`, or `public`.
