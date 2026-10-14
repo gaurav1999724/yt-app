@@ -19,8 +19,11 @@ app = FastAPI(title="YouTube Pipeline UI", docs_url=None, redoc_url=None)
 app.mount("/static", StaticFiles(directory=str(ROOT / "static")), name="static")
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.api_route("/", methods=["GET", "HEAD"], response_class=HTMLResponse)
 async def home(request: Request):
+    # HEAD is required for Render health checks
+    if request.method == "HEAD":
+        return HTMLResponse(content="", status_code=200)
     return templates.TemplateResponse(
         request,
         "index.html",
@@ -152,11 +155,15 @@ def media(run_id: str, name: str):
 
 
 def main() -> int:
+    import os
+
     import uvicorn
 
-    print("YouTube Pipeline UI -> http://127.0.0.1:8765")
-    print("No login. Local only.")
-    uvicorn.run("ui.app:app", host="127.0.0.1", port=8765, reload=False)
+    # Render injects PORT and expects 0.0.0.0 (not 127.0.0.1)
+    port = int(os.environ.get("PORT", "8765"))
+    host = os.environ.get("HOST", "0.0.0.0")
+    print(f"YouTube Pipeline UI -> http://{host}:{port}")
+    uvicorn.run("ui.app:app", host=host, port=port, reload=False)
     return 0
 
 

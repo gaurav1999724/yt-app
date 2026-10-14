@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: yt-app
+    runtime: python
+    buildCommand: pip install -r pipeline/requirements.txt
+    startCommand: uvicorn ui.app:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.0"
+      - key: LANGUAGE
+        value: hi
+      - key: TTS_VOICE
+        value: hi-IN-MadhurNeural
+      - key: VIDEO_FORMAT
+        value: shorts
+      - key: UPLOAD_PRIVACY
+        value: private
